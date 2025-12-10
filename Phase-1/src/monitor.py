@@ -2,6 +2,41 @@ import psutil
 from typing import List, Dict, Optional
 import socket
 
+_dns_cache = {}
+
+def resolve_ip_to_domain(ip_address: str) -> str:
+    """
+    Resolve IP address to domain name using reverse DNS.
+    Uses caching to avoid repeated lookups.
+    
+    Args:
+        ip_address: IP address string
+        
+    Returns:
+        Domain name if resolved, otherwise returns the IP address
+    """
+    # Check cache first
+    if ip_address in _dns_cache:
+        return _dns_cache[ip_address]
+    
+    # Skip private/local IPs (they won't resolve anyway)
+    if ip_address.startswith(('127.', '192.168.', '10.', '172.')):
+        _dns_cache[ip_address] = ip_address
+        return ip_address
+    
+    try:
+        # Set timeout to prevent hanging
+        socket.setdefaulttimeout(5)
+        domain = socket.gethostbyaddr(ip_address)[0]
+        _dns_cache[ip_address] = domain
+        return domain
+    except (socket.herror, socket.gaierror, socket.timeout):
+        # DNS lookup failed, cache and return IP
+        _dns_cache[ip_address] = ip_address
+        return ip_address
+    except Exception:
+        _dns_cache[ip_address] = ip_address
+        return ip_address
 
 def get_process_info(pid: Optional[int]) -> Dict[str, str]:
     """
@@ -74,8 +109,21 @@ def get_active_connections() -> List[Dict]:
         local_addr = f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else "N/A"
         
         # Extract remote address info
-        remote_addr = f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else "N/A"
-        
+        #remote_addr = f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else "N/A"
+        # Extract remote address info with domain resolution
+        if conn.raddr:
+            remote_ip = conn.raddr.ip
+            remote_port = conn.raddr.port
+            remote_domain = resolve_ip_to_domain(remote_ip)
+            
+            # Show domain if different from IP
+            if remote_domain != remote_ip:
+                remote_addr = f"{remote_domain} ({remote_ip}:{remote_port})"
+            else:
+                remote_addr = f"{remote_ip}:{remote_port}"
+        else:
+            remote_addr = "N/A"
+
         # Get process information (handles None PIDs and closed processes)
         process_info = get_process_info(conn.pid)
         
@@ -97,7 +145,7 @@ def get_active_connections() -> List[Dict]:
 
 def display_connections(connections: List[Dict]) -> None:
     """
-    Display connections in a formatted way.
+    Display connections in a compact formatted view.
     
     Args:
         connections: List of connection dictionaries
@@ -107,18 +155,12 @@ def display_connections(connections: List[Dict]) -> None:
         return
     
     print(f"\nFound {len(connections)} active connections:\n")
-    print("-" * 120)
+    print(f"{'Process':<20} {'PID':<8} {'Remote Address'}")
+    print("-" * 80)
     
-    for i, conn in enumerate(connections, 1):
-        print(f"Connection #{i}")
-        print(f"  Type:           {conn['type']}")
-        print(f"  Status:         {conn['status']}")
-        print(f"  Local:          {conn['local_address']}")
-        print(f"  Remote:         {conn['remote_address']}")
-        print(f"  PID:            {conn['pid']}")
-        print(f"  Process:        {conn['process_name']}")
-        print(f"  Path:           {conn['process_path']}")
-        print("-" * 120)
+    for conn in connections:
+        pid_str = str(conn['pid']) if conn['pid'] != 'N/A' else 'N/A'
+        print(f"{conn['process_name']:<20} {pid_str:<8} {conn['remote_address']}")
 
 
 if __name__ == "__main__":
