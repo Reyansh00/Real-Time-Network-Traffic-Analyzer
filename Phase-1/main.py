@@ -16,92 +16,13 @@ try:
     from src.bandwidth import BandwidthTracker, format_bytes
     from src.resolver import IPResolver, extract_ip_from_address
     from src.display import NetworkDisplay
+    from src.anomaly import AnomalyDetector
     ENHANCED_MODE = True
 except ImportError as e:
     print(f"Warning: Could not import enhanced modules: {e}")
     print("Install requirements: pip install psutil requests rich")
     print("Falling back to basic mode...\n")
     ENHANCED_MODE = False
-
-
-class AnomalyDetector:
-    """Simple anomaly detection for suspicious network activity."""
-    
-    SUSPICIOUS_PORTS = {
-        4444, 4445,      # Metasploit
-        5555, 5556,      # Android Debug Bridge exploits
-        6666, 6667, 6668, 6669,  # IRC botnets
-        31337,           # Back Orifice
-        12345,           # NetBus
-        1337,            # Elite
-        3389,            # RDP (can be suspicious if external)
-    }
-    
-    def __init__(self, max_connections_per_process: int = 50):
-        self.max_connections = max_connections_per_process
-        self.alerts = []
-    
-    def analyze(self, connections: list) -> list:
-        """Analyze connections for anomalies."""
-        self.alerts = []
-        self._check_suspicious_ports(connections)
-        self._check_connection_count(connections)
-        self._check_suspicious_processes(connections)
-        return self.alerts
-    
-    def _check_suspicious_ports(self, connections: list):
-        """Check for connections to suspicious ports."""
-        for conn in connections:
-            remote = conn.get('remote_address', '')
-            if ':' in remote:
-                try:
-                    port = int(remote.split(':')[1])
-                    if port in self.SUSPICIOUS_PORTS:
-                        self.alerts.append({
-                            'timestamp': datetime.now(),
-                            'type': 'Suspicious Port',
-                            'severity': 'high',
-                            'description': f"{conn['process_name']} → {remote} (port {port})"
-                        })
-                except ValueError:
-                    pass
-    
-    def _check_connection_count(self, connections: list):
-        """Check for processes with unusually high connection counts."""
-        process_counts = defaultdict(int)
-        for conn in connections:
-            process_counts[conn['process_name']] += 1
-        
-        for process, count in process_counts.items():
-            if count > self.max_connections:
-                self.alerts.append({
-                    'timestamp': datetime.now(),
-                    'type': 'High Connection Count',
-                    'severity': 'medium',
-                    'description': f"{process} has {count} connections (threshold: {self.max_connections})"
-                })
-    
-    def _check_suspicious_processes(self, connections: list):
-        """Check for processes running from suspicious locations."""
-        suspicious_paths = ['temp', 'tmp', 'appdata\\local\\temp', 'downloads']
-        checked = set()
-        
-        for conn in connections:
-            process = conn['process_name']
-            if process in checked:
-                continue
-            checked.add(process)
-            
-            path = conn.get('process_path', '').lower()
-            for suspicious in suspicious_paths:
-                if suspicious in path:
-                    self.alerts.append({
-                        'timestamp': datetime.now(),
-                        'type': 'Suspicious Process Path',
-                        'severity': 'medium',
-                        'description': f"{process} from {conn['process_path']}"
-                    })
-                    break
 
 
 def enrich_connections(connections: list, resolver: IPResolver, limit: int = 25) -> list:
@@ -123,16 +44,19 @@ def enrich_connections(connections: list, resolver: IPResolver, limit: int = 25)
             if geo['status'] == 'success':
                 conn['location'] = resolver.format_location(geo)
                 conn['country'] = geo.get('country', 'Unknown')
+                conn['country_code'] = geo.get('countryCode', '')  # Add this line
                 conn['isp'] = geo.get('isp', 'Unknown')
             elif geo['status'] == 'private':
                 conn['location'] = 'Private Network'
                 conn['country'] = 'Local'
+                conn['country_code'] = 'LOCAL'  # Add this line
                 conn['isp'] = 'Private'
             else:
                 conn['location'] = 'Unknown'
                 conn['country'] = 'Unknown'
+                conn['country_code'] = ''  # Add this line
                 conn['isp'] = 'Unknown'
-    
+                
     return connections
 
 
