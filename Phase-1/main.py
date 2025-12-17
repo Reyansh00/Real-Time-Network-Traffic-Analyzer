@@ -17,6 +17,7 @@ try:
     from src.resolver import IPResolver, extract_ip_from_address
     from src.display import NetworkDisplay
     from src.anomaly import AnomalyDetector
+    from src.geo_analyser import GeographicAnalyzer, MapVisualizer
     ENHANCED_MODE = True
 except ImportError as e:
     print(f"Warning: Could not import enhanced modules: {e}")
@@ -45,16 +46,25 @@ def enrich_connections(connections: list, resolver: IPResolver, limit: int = 25)
                 conn['location'] = resolver.format_location(geo)
                 conn['country'] = geo.get('country', 'Unknown')
                 conn['country_code'] = geo.get('countryCode', '')  # Add this line
+                conn['city'] = geo.get('city', 'Unknown')          # ADD THIS
+                conn['lat'] = geo.get('lat', 0)                    # ADD THIS
+                conn['lon'] = geo.get('lon', 0)                    # ADD THIS
                 conn['isp'] = geo.get('isp', 'Unknown')
             elif geo['status'] == 'private':
                 conn['location'] = 'Private Network'
                 conn['country'] = 'Local'
                 conn['country_code'] = 'LOCAL'  # Add this line
                 conn['isp'] = 'Private'
+                conn['city'] = 'Private'                           # ADD THIS
+                conn['lat'] = 0                                    # ADD THIS
+                conn['lon'] = 0 
             else:
                 conn['location'] = 'Unknown'
                 conn['country'] = 'Unknown'
                 conn['country_code'] = ''  # Add this line
+                conn['city'] = 'Unknown'                           # ADD THIS
+                conn['lat'] = 0                                    # ADD THIS
+                conn['lon'] = 0 
                 conn['isp'] = 'Unknown'
                 
     return connections
@@ -395,6 +405,104 @@ def export_to_file(connections, filename='connections.txt'):
     except Exception as e:
         print(f"❌ Error exporting to file: {e}")
 
+def geographic_analysis():
+    """Perform detailed geographic analysis and create visualizations."""
+    if not ENHANCED_MODE:
+        print("Enhanced mode required for geographic analysis")
+        return
+    
+    display = NetworkDisplay()
+    resolver = IPResolver()
+    analyzer = GeographicAnalyzer()
+    
+    print("\n🌍 Performing geographic analysis...")
+    print("This may take a moment for geolocation lookups...\n")
+    
+    # Get connections
+    connections = get_active_connections()
+    
+    # Enrich with geolocation (higher limit for analysis)
+    connections = enrich_connections(connections, resolver, limit=50)
+    
+    # Perform analysis
+    report = analyzer.analyze_connections(connections)
+    
+    # Print report
+    analyzer.print_report(report)
+    
+    # Ask about creating maps
+    create_maps = input("\n📊 Create interactive map visualizations? (y/n): ").strip().lower()
+    
+    if create_maps == 'y':
+        print("\nCreating visualizations...")
+        
+        # Create world map
+        map_file = MapVisualizer.create_world_map(connections)
+        if map_file:
+            print(f"  ✅ World map: {map_file}")
+        
+        # Create heatmap
+        heatmap_file = MapVisualizer.create_country_heatmap(connections)
+        if heatmap_file:
+            print(f"  ✅ Country heatmap: {heatmap_file}")
+        
+        print("\n💡 Open the HTML files in your browser to view the maps!")
+
+
+def quick_geo_summary():
+    """Quick geographic summary of current connections."""
+    if not ENHANCED_MODE:
+        print("Enhanced mode required")
+        return
+    
+    from rich.table import Table
+    from rich import box
+    
+    display = NetworkDisplay()
+    resolver = IPResolver()
+    
+    print("\n🗺️  Quick Geographic Summary...")
+    connections = get_active_connections()
+    connections = enrich_connections(connections, resolver, limit=30)
+    
+    # Count by country
+    from collections import Counter
+    country_counts = Counter()
+    
+    for conn in connections:
+        country = conn.get('country', 'Unknown')
+        if country not in ['Unknown', 'Private Network', 'Local']:
+            country_counts[country] += 1
+    
+    if not country_counts:
+        print("No international connections found")
+        return
+    
+    # Create table
+    table = Table(
+        title="🌍 Connections by Country",
+        box=box.ROUNDED,
+        show_header=True,
+        header_style="bold cyan"
+    )
+    
+    table.add_column("Rank", justify="right", style="dim", width=6)
+    table.add_column("Country", style="green", width=25)
+    table.add_column("Connections", justify="right", style="bright_yellow", width=12)
+    table.add_column("Percentage", justify="right", style="cyan", width=12)
+    
+    total = sum(country_counts.values())
+    for i, (country, count) in enumerate(country_counts.most_common(10), 1):
+        percentage = (count / total) * 100
+        table.add_row(
+            str(i),
+            country,
+            str(count),
+            f"{percentage:.1f}%"
+        )
+    
+    display.console.print(table)
+    print()
 
 def show_menu():
     """Display the main menu."""
@@ -414,6 +522,9 @@ def show_menu():
         print("\n  💾 Export & Analysis")
         print("    6. Scan and export to file")
         print("    7. Export with geolocation data")
+        print("\n  🌍 Geographic Analysis")                        # NEW SECTION
+        print("    8. Full geographic analysis + maps")            # NEW OPTION
+        print("    9. Quick geographic summary")        
     else:
         print("\n  📊 Basic Scans")
         print("    1. Single scan")
@@ -553,6 +664,14 @@ def main():
             filename = input("\n  Enter filename (default 'connections_geo.txt'): ").strip()
             filename = filename if filename else 'connections_geo.txt'
             export_to_file(connections, filename)
+            input("\n  Press Enter to continue...")
+        
+        elif choice == '8' and ENHANCED_MODE:
+            geographic_analysis()
+            input("\n  Press Enter to continue...")
+
+        elif choice == '9' and ENHANCED_MODE:
+            quick_geo_summary()
             input("\n  Press Enter to continue...")
         
         else:

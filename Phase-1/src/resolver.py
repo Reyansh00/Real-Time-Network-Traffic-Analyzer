@@ -1,13 +1,12 @@
 """
-IP Resolution and Geolocation Module
+IP Resolution and Geolocation Module - FIXED VERSION
 Performs reverse DNS lookups and IP geolocation with caching.
 """
 
 import socket
 import requests
 import time
-from typing import Dict, Optional, Tuple
-from functools import lru_cache
+from typing import Dict, Optional
 import json
 
 
@@ -66,7 +65,7 @@ class IPResolver:
     Resolves IP addresses to hostnames and geographic locations.
     """
     
-    def __init__(self, cache_ttl: int = 3600, timeout: int = 2):
+    def __init__(self, cache_ttl: int = 3600, timeout: int = 3):
         """
         Initialize the IP resolver.
         
@@ -79,6 +78,8 @@ class IPResolver:
         self.api_calls = 0
         self.api_limit = 45  # ip-api.com free tier limit per minute
         self.api_reset_time = time.time() + 60
+        self.last_api_call = 0
+        self.min_delay = 1.5  # Minimum delay between API calls (40 per minute max)
     
     def resolve_hostname(self, ip: str) -> str:
         """
@@ -100,6 +101,8 @@ class IPResolver:
             return cached
         
         try:
+            # Set socket timeout
+            socket.setdefaulttimeout(self.timeout)
             hostname = socket.gethostbyaddr(ip)[0]
             self.cache.set_dns(ip, hostname)
             return hostname
@@ -126,9 +129,12 @@ class IPResolver:
                 'status': 'private',
                 'ip': ip,
                 'country': 'Private Network',
+                'countryCode': 'LOCAL',
                 'city': 'Local',
                 'isp': 'Private',
-                'org': 'Private Network'
+                'org': 'Private Network',
+                'lat': 0,
+                'lon': 0
             }
         
         # Check cache first
@@ -141,13 +147,23 @@ class IPResolver:
             return {
                 'status': 'rate_limited',
                 'ip': ip,
-                'message': 'API rate limit exceeded'
+                'country': 'Rate Limited',
+                'countryCode': '',
+                'message': 'API rate limit exceeded, try again in a moment'
             }
         
+        # Enforce minimum delay between API calls
+        current_time = time.time()
+        time_since_last = current_time - self.last_api_call
+        if time_since_last < self.min_delay:
+            time.sleep(self.min_delay - time_since_last)
+        
         try:
-            # Use ip-api.com free API
-            url = f"http://ip-api.com/json/{ip}"
+            # Use ip-api.com free API with all available fields
+            url = f"http://ip-api.com/json/{ip}?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,query"
+            
             response = requests.get(url, timeout=self.timeout)
+            self.last_api_call = time.time()
             
             if response.status_code == 200:
                 data = response.json()
@@ -157,7 +173,7 @@ class IPResolver:
                         'status': 'success',
                         'ip': ip,
                         'country': data.get('country', 'Unknown'),
-                        'country_code': data.get('countryCode', ''),
+                        'countryCode': data.get('countryCode', ''),
                         'region': data.get('regionName', 'Unknown'),
                         'city': data.get('city', 'Unknown'),
                         'zip': data.get('zip', ''),
@@ -166,21 +182,30 @@ class IPResolver:
                         'timezone': data.get('timezone', ''),
                         'isp': data.get('isp', 'Unknown'),
                         'org': data.get('org', 'Unknown'),
-                        'as': data.get('as', '')
+                        'as': data.get('as', ''),
+                        'query': data.get('query', ip)
                     }
+                    
+                    self.cache.set_geo(ip, geo_data)
+                    return geo_data
                 else:
+                    # API returned fail status
+                    error_msg = data.get('message', 'Unknown error')
                     geo_data = {
                         'status': 'failed',
                         'ip': ip,
-                        'message': data.get('message', 'Unknown error')
+                        'country': 'Unknown',
+                        'countryCode': '',
+                        'message': error_msg
                     }
-                
-                self.cache.set_geo(ip, geo_data)
-                return geo_data
+                    self.cache.set_geo(ip, geo_data)
+                    return geo_data
             else:
                 return {
                     'status': 'error',
                     'ip': ip,
+                    'country': 'Error',
+                    'countryCode': '',
                     'message': f'API returned status {response.status_code}'
                 }
         
@@ -188,19 +213,25 @@ class IPResolver:
             return {
                 'status': 'timeout',
                 'ip': ip,
+                'country': 'Timeout',
+                'countryCode': '',
                 'message': 'Request timed out'
             }
         except requests.RequestException as e:
             return {
                 'status': 'error',
                 'ip': ip,
-                'message': str(e)
+                'country': 'Error',
+                'countryCode': '',
+                'message': f'Request error: {str(e)}'
             }
         except Exception as e:
             return {
                 'status': 'error',
                 'ip': ip,
-                'message': str(e)
+                'country': 'Error',
+                'countryCode': '',
+                'message': f'Unexpected error: {str(e)}'
             }
     
     def get_full_info(self, ip: str) -> Dict:
@@ -232,36 +263,52 @@ class IPResolver:
         Returns:
             True if private, False otherwise
         """
-        # Common private IP ranges
-        private_ranges = [
-            ('127.', True),      # Loopback
-            ('10.', True),       # Class A private
-            ('172.16.', True),   # Class B private
-            ('172.17.', True),
-            ('172.18.', True),
-            ('172.19.', True),
-            ('172.20.', True),
-            ('172.21.', True),
-            ('172.22.', True),
-            ('172.23.', True),
-            ('172.24.', True),
-            ('172.25.', True),
-            ('172.26.', True),
-            ('172.27.', True),
-            ('172.28.', True),
-            ('172.29.', True),
-            ('172.30.', True),
-            ('172.31.', True),
-            ('192.168.', True),  # Class C private
-            ('169.254.', True),  # Link-local
-            ('0.0.0.0', True),   # Unspecified
-        ]
-        
-        for prefix, _ in private_ranges:
-            if ip.startswith(prefix):
+        try:
+            # Split IP into octets
+            parts = ip.split('.')
+            if len(parts) != 4:
+                return False
+            
+            # Convert to integers
+            octets = [int(p) for p in parts]
+            
+            # Check various private ranges
+            # 127.0.0.0/8 - Loopback
+            if octets[0] == 127:
                 return True
-        
-        return False
+            
+            # 10.0.0.0/8 - Class A private
+            if octets[0] == 10:
+                return True
+            
+            # 172.16.0.0/12 - Class B private
+            if octets[0] == 172 and 16 <= octets[1] <= 31:
+                return True
+            
+            # 192.168.0.0/16 - Class C private
+            if octets[0] == 192 and octets[1] == 168:
+                return True
+            
+            # 169.254.0.0/16 - Link-local
+            if octets[0] == 169 and octets[1] == 254:
+                return True
+            
+            # 0.0.0.0/8 - Current network
+            if octets[0] == 0:
+                return True
+            
+            # 224.0.0.0/4 - Multicast
+            if octets[0] >= 224 and octets[0] <= 239:
+                return True
+            
+            # 240.0.0.0/4 - Reserved
+            if octets[0] >= 240:
+                return True
+            
+            return False
+            
+        except (ValueError, IndexError):
+            return False
     
     def _check_rate_limit(self) -> bool:
         """
@@ -294,17 +341,36 @@ class IPResolver:
         Returns:
             Formatted location string
         """
+        if geo_data.get('status') == 'private':
+            return 'Private Network'
+        
         if geo_data.get('status') != 'success':
             return geo_data.get('message', 'Unknown')
         
-        city = geo_data.get('city', 'Unknown')
+        city = geo_data.get('city', '')
         region = geo_data.get('region', '')
         country = geo_data.get('country', 'Unknown')
         
-        if region and region != city:
-            return f"{city}, {region}, {country}"
-        else:
-            return f"{city}, {country}"
+        # Build location string
+        parts = []
+        if city and city != 'Unknown':
+            parts.append(city)
+        if region and region != 'Unknown' and region != city:
+            parts.append(region)
+        if country and country != 'Unknown':
+            parts.append(country)
+        
+        return ', '.join(parts) if parts else 'Unknown'
+    
+    def get_stats(self) -> Dict:
+        """Get resolver statistics."""
+        return {
+            'dns_cache_size': len(self.cache.dns_cache),
+            'geo_cache_size': len(self.cache.geo_cache),
+            'api_calls': self.api_calls,
+            'api_limit': self.api_limit,
+            'time_until_reset': max(0, int(self.api_reset_time - time.time()))
+        }
 
 
 def extract_ip_from_address(address: str) -> str:
@@ -324,21 +390,27 @@ def extract_ip_from_address(address: str) -> str:
 
 # Example usage and testing
 if __name__ == "__main__":
-    print("Testing IP Resolver...\n")
+    print("=" * 70)
+    print("  TESTING IP RESOLVER WITH GEOLOCATION")
+    print("=" * 70)
+    print()
     
     resolver = IPResolver()
     
     # Test IPs (public examples)
-    test_ips = [
-        "8.8.8.8",           # Google DNS
-        "1.1.1.1",           # Cloudflare DNS
-        "142.250.185.46",    # Google
-        "127.0.0.1",         # Localhost
-        "192.168.1.1"        # Private IP
+    test_cases = [
+        ("8.8.8.8", "Google DNS"),
+        ("1.1.1.1", "Cloudflare DNS"),
+        ("142.250.185.46", "Google"),
+        ("13.107.42.14", "Microsoft"),
+        ("127.0.0.1", "Localhost (Private)"),
+        ("192.168.1.1", "Private Network"),
     ]
     
-    for ip in test_ips:
-        print(f"Resolving {ip}...")
+    for ip, description in test_cases:
+        print(f"Testing: {description}")
+        print(f"IP: {ip}")
+        print("-" * 70)
         
         # Hostname resolution
         hostname = resolver.resolve_hostname(ip)
@@ -346,16 +418,46 @@ if __name__ == "__main__":
         
         # Geolocation
         geo = resolver.get_geolocation(ip)
+        print(f"  Status: {geo.get('status', 'unknown')}")
+        
         if geo['status'] == 'success':
             location = resolver.format_location(geo)
             print(f"  Location: {location}")
+            print(f"  Country: {geo.get('country', 'Unknown')} ({geo.get('countryCode', 'N/A')})")
+            print(f"  City: {geo.get('city', 'Unknown')}")
             print(f"  ISP: {geo.get('isp', 'Unknown')}")
+            print(f"  Coordinates: {geo.get('lat', 0)}, {geo.get('lon', 0)}")
+        elif geo['status'] == 'private':
+            print(f"  Location: {geo.get('country', 'Private Network')}")
         else:
-            print(f"  Location: {geo.get('message', 'Unknown')}")
+            print(f"  Error: {geo.get('message', 'Unknown error')}")
         
         print()
         
-        # Small delay to avoid rate limiting
-        time.sleep(1.5)
+        # Delay to respect rate limits
+        if ip not in ['127.0.0.1', '192.168.1.1']:
+            time.sleep(1.5)
     
-    print(f"API calls made: {resolver.api_calls}")
+    # Show statistics
+    stats = resolver.get_stats()
+    print("=" * 70)
+    print("RESOLVER STATISTICS")
+    print("=" * 70)
+    print(f"  DNS Cache Size: {stats['dns_cache_size']}")
+    print(f"  Geo Cache Size: {stats['geo_cache_size']}")
+    print(f"  API Calls Made: {stats['api_calls']}/{stats['api_limit']}")
+    print(f"  Time Until Reset: {stats['time_until_reset']}s")
+    print()
+    
+    # Test cache
+    print("=" * 70)
+    print("TESTING CACHE (should be instant)")
+    print("=" * 70)
+    
+    start_time = time.time()
+    cached_geo = resolver.get_geolocation("8.8.8.8")
+    elapsed = time.time() - start_time
+    
+    print(f"  Cached lookup took: {elapsed:.4f} seconds")
+    print(f"  Result: {resolver.format_location(cached_geo)}")
+    print()
