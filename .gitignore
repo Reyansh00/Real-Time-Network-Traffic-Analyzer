@@ -4,3 +4,5 @@ venv/
 # Ignore pycache
 src/__pycache__/
 
+#Ignore map_html
+map_html/
