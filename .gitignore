@@ -1,0 +1,6 @@
+# Ignore vevn
+venv/
+
+# Ignore pycache
+src/__pycache__/
+

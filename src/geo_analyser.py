@@ -6,7 +6,9 @@ Analyzes connection patterns and creates interactive maps
 from collections import Counter, defaultdict
 from typing import Dict, List
 import json
+import os
 
+MAP_OUTPUT_DIR = 'map_html'
 
 class GeographicAnalyzer:
     """Analyze geographic patterns in network connections."""
@@ -200,7 +202,7 @@ class MapVisualizer:
     """Create HTML map visualization of connections."""
     
     @staticmethod
-    def create_world_map(connections: List[Dict], output_file: str = 'connection_map.html') -> str:
+    def create_world_map(connections: List[Dict], output_file: str = 'map_html/connection_map.html') -> str:
         """
         Create interactive world map showing all connections.
         
@@ -212,6 +214,9 @@ class MapVisualizer:
             Path to created HTML file
         """
         
+        # Create directory if it doesn't exist
+        os.makedirs('map_html', exist_ok=True)
+
         # Extract location data
         locations = []
         for conn in connections:
@@ -388,7 +393,7 @@ class MapVisualizer:
             return None
     
     @staticmethod
-    def create_country_heatmap(connections: List[Dict], output_file: str = 'country_heatmap.html') -> str:
+    def create_country_heatmap(connections: List[Dict], output_file: str = 'map_html/country_heatmap.html') -> str:
         """
         Create a heatmap showing connection density by country.
         
@@ -399,6 +404,10 @@ class MapVisualizer:
         Returns:
             Path to created HTML file
         """
+        
+        # Create directory if it doesn't exist
+        os.makedirs('map_html', exist_ok=True)
+
         # Count connections per country
         country_counts = Counter()
         country_coords = {}
