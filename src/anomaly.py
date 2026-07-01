@@ -10,7 +10,7 @@ from typing import List, Dict, Set
 
 class AnomalyDetector:
     """Enhanced anomaly detection for suspicious network activity."""
-    
+
     # Standard ports that are typically safe
     STANDARD_PORTS = {
         20, 21,      # FTP
@@ -32,20 +32,44 @@ class AnomalyDetector:
         8080,        # HTTP Alt
         8443,        # HTTPS Alt
     }
-    
-    # Known suspicious/malicious ports
+
+    # Known suspicious / uncommon / malware-associated ports
     SUSPICIOUS_PORTS = {
-        4444, 4445,      # Metasploit
-        5555, 5556,      # Android Debug Bridge exploits
-        6666, 6667, 6668, 6669,  # IRC botnets
-        31337,           # Back Orifice
-        12345,           # NetBus
-        1337,            # Elite/Leet
-        3389,            # RDP (can be suspicious if external)
-        1234,            # SubSeven
-        9999,            # Various trojans
-        27374,           # SubSeven
-        54321,           # Back Orifice 2000
+        69,                  # TFTP
+        111,                # RPCbind
+        135, 137, 138, 139, 445,   # SMB / Windows services
+        161, 162,           # SNMP
+        389, 636,           # LDAP
+        512, 513, 514,      # rsh/rlogin
+        873,                # rsync
+        1080,               # SOCKS proxy
+        1194,               # OpenVPN
+        1433,               # MSSQL
+        1521,               # Oracle DB
+        1723,               # PPTP VPN
+        2049,               # NFS
+        2375, 2376,         # Docker API (dangerous if exposed)
+        3128,               # Squid proxy
+        3389,               # RDP
+        4444, 4445, 4446,   # Metasploit payloads
+        5000, 5001,         # UPnP / admin interfaces
+        5555, 5556,         # Android Debug Bridge
+        5900, 5901,         # VNC remote desktop
+        5985, 5986,         # WinRM
+        6666, 6667, 6668, 6669,     # IRC botnets
+        7001,               # WebLogic admin
+        7547,               # Router remote management
+        8000, 8008, 8081, 8888,
+        9200, 9300,         # Elasticsearch
+        11211,              # Memcached amplification attacks
+        27017, 27018, 27019,         # MongoDB
+        31337,              # Back Orifice
+        32764,              # Router backdoor
+        54321,              # Back Orifice 2000
+        1234, 12345,        # NetBus / SubSeven
+        9999,               # Various trojans
+        1337,               # Elite / hacker tools
+        27374               # SubSeven
     }
     
     # High-risk countries (optional - can be customized)
@@ -322,42 +346,3 @@ class AnomalyDetector:
             'suspicious_paths_found': 0,
             'high_risk_countries_found': 0
         }
-
-
-# Example usage and testing
-if __name__ == "__main__":
-    # Test with sample connections
-    test_connections = [
-        {
-            'process_name': 'malware.exe',
-            'pid': 1234,
-            'remote_address': '192.168.1.100:4444',
-            'process_path': 'C:\\Users\\User\\AppData\\Local\\Temp\\malware.exe'
-        },
-        {
-            'process_name': 'chrome.exe',
-            'pid': 5678,
-            'remote_address': '142.250.185.46:443',
-            'process_path': 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-            'country': 'United States',
-            'country_code': 'US'
-        },
-        {
-            'process_name': 'suspicious.exe',
-            'pid': 9999,
-            'remote_address': '45.33.32.156:31337',
-            'process_path': 'C:\\Windows\\Temp\\suspicious.exe'
-        }
-    ]
-    
-    detector = AnomalyDetector(max_connections_per_process=10)
-    alerts = detector.analyze(test_connections)
-    
-    print("\n=== Anomaly Detection Test ===\n")
-    for alert in alerts:
-        print(f"[{alert['severity'].upper()}] {alert['type']}")
-        print(f"  {alert['description']}")
-        print(f"  Time: {alert['timestamp'].strftime('%H:%M:%S')}")
-        print()
-    
-    print("Statistics:", detector.get_statistics())
