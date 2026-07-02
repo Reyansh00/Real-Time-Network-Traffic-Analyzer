@@ -8,6 +8,7 @@ import requests
 import time
 from typing import Dict, Optional
 import json
+import ipaddress
 
 
 class ResolverCache:
@@ -254,60 +255,9 @@ class IPResolver:
         }
     
     def _is_private_ip(self, ip: str) -> bool:
-        """
-        Check if IP is private/local.
-        
-        Args:
-            ip: IP address to check
-            
-        Returns:
-            True if private, False otherwise
-        """
         try:
-            # Split IP into octets
-            parts = ip.split('.')
-            if len(parts) != 4:
-                return False
-            
-            # Convert to integers
-            octets = [int(p) for p in parts]
-            
-            # Check various private ranges
-            # 127.0.0.0/8 - Loopback
-            if octets[0] == 127:
-                return True
-            
-            # 10.0.0.0/8 - Class A private
-            if octets[0] == 10:
-                return True
-            
-            # 172.16.0.0/12 - Class B private
-            if octets[0] == 172 and 16 <= octets[1] <= 31:
-                return True
-            
-            # 192.168.0.0/16 - Class C private
-            if octets[0] == 192 and octets[1] == 168:
-                return True
-            
-            # 169.254.0.0/16 - Link-local
-            if octets[0] == 169 and octets[1] == 254:
-                return True
-            
-            # 0.0.0.0/8 - Current network
-            if octets[0] == 0:
-                return True
-            
-            # 224.0.0.0/4 - Multicast
-            if octets[0] >= 224 and octets[0] <= 239:
-                return True
-            
-            # 240.0.0.0/4 - Reserved
-            if octets[0] >= 240:
-                return True
-            
-            return False
-            
-        except (ValueError, IndexError):
+            return ipaddress.ip_address(ip).is_private
+        except:
             return False
     
     def _check_rate_limit(self) -> bool:
@@ -375,16 +325,25 @@ class IPResolver:
 
 def extract_ip_from_address(address: str) -> str:
     """
-    Extract IP address from "IP:PORT" format.
-    
-    Args:
-        address: Address string in "IP:PORT" format
-        
-    Returns:
-        IP address only
+    Extract IP from IP:PORT for both IPv4 and IPv6.
     """
-    if ':' in address:
-        return address.split(':')[0]
+
+    # pure IP already
+    try:
+        ipaddress.ip_address(address)
+        return address
+    except:
+        pass
+
+    # IPv6 usually has many :
+    if address.count(":") > 1:
+        # split from right once
+        return address.rsplit(":", 1)[0]
+
+    # IPv4
+    if ":" in address:
+        return address.split(":")[0]
+
     return address
 
 
